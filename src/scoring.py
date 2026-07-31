@@ -26,13 +26,25 @@ def map_position_to_label(question_text: str, canonical_descriptions=None):
     Falls back to identity mapping (position -> position) for questions whose
     options don't match any canonical description (e.g. generic knowledge MCQs,
     where the 'label' is just its own position number).
+
+    The model always boxes the option's 1-indexed on-page position (that's the
+    format it was trained on), regardless of what label parse_options() reports
+    for that option. Those normally coincide ("3" in the option header -> pos "3"),
+    but parse_options() special-cases fully C-prefixed option blocks (needed to
+    parse train.csv during SFT data prep) and returns "C1".."C8" as the label in
+    that case -- which validation_questions.csv hits, since none of its questions
+    are actually shuffled/renumbered (unlike test.csv, which mostly is). Keying
+    the map by both the reported label and the raw enumeration index keeps
+    scoring correct either way.
     """
     canonical_descriptions = canonical_descriptions or CANONICAL_DESCRIPTIONS
     desc_to_label = {desc.strip(): label for label, desc in canonical_descriptions.items()}
     options = parse_options(question_text)
     mapping = {}
-    for pos, desc in options:
-        mapping[pos] = desc_to_label.get(desc.strip(), pos)
+    for i, (pos, desc) in enumerate(options, start=1):
+        label = desc_to_label.get(desc.strip(), pos)
+        mapping[pos] = label
+        mapping[str(i)] = label
     return mapping
 
 
@@ -67,15 +79,23 @@ if __name__ == "__main__":
     lookup = dict(zip(vq["ID"], vq["question"]))
 
     # Fake "predictions" that just parrot the correct answer, to sanity-check
-    # the extraction/mapping/scoring plumbing end-to-end without a model.
+    # the extraction/mapping/scoring plumbing end-to-end without a model. Boxes
+    # the option's 1-indexed on-page position (what a real model actually
+    # outputs), not a key straight out of map_position_to_label's own dict --
+    # doing the latter previously let this check pass at ~1.0 even with the
+    # map_position_to_label bug, since it round-tripped through the same
+    # (buggy) function on both the encode and decode side instead of exercising
+    # it against real model-shaped output.
     fake_rows = []
     for _, row in vt.iterrows():
         base_id = row["ID"].rsplit("_", 1)[0]
         qtext = lookup[base_id]
-        pos_map = map_position_to_label(qtext)
+        options = parse_options(qtext)
         true_label = row["Target"]
-        true_positions = [p for p, lbl in pos_map.items() if lbl == true_label]
-        pos = true_positions[0] if true_positions else "0"
+        desc_to_label = {desc.strip(): label for label, desc in CANONICAL_DESCRIPTIONS.items()}
+        true_positions = [i for i, (_, desc) in enumerate(options, start=1)
+                           if desc_to_label.get(desc.strip()) == true_label]
+        pos = true_positions[0] if true_positions else 0
         fake_rows.append({"ID": row["ID"], "Target": f"dummy reasoning \\boxed{{{pos}}}"})
     fake_pred = pd.DataFrame(fake_rows)
 

@@ -4,7 +4,22 @@ Solution for the [Cassava AI Root Cause Detective](https://zindi.africa) hackath
 run on Zindi). Closes **2026-08-01**, leaderboard reveal **2026-08-03**.
 
 **Open in Colab:**
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Ashuza11/cassava-network-anomaly-ai/blob/main/notebooks/Cassava_AIRCD_finetune.ipynb)
+
+- Round 1 (submitted, see [SUBMISSIONS.md](SUBMISSIONS.md)):
+  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Ashuza11/cassava-network-anomaly-ai/blob/main/notebooks/Cassava_AIRCD_finetune.ipynb)
+- Round 2 (scaled synthetic training data, separate Hub adapter, see [Status](#status-2026-07-31)):
+  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Ashuza11/cassava-network-anomaly-ai/blob/main/notebooks/Cassava_AIRCD_finetune_v2.ipynb)
+
+## Status (2026-07-31)
+
+Three submissions so far, all clustered around 0.13-0.14 public score — see [SUBMISSIONS.md](SUBMISSIONS.md)
+for the full log and analysis. All three were infrastructure fixes (generation token budget, a local-scoring
+bug, a non-deterministic seeding bug), not model-quality changes, and none moved the score meaningfully. The
+adapter itself hasn't been retrained since round 1's first pass on `train.csv` reformatted as-is (2,400 rows).
+Current best evidence points at that being the actual bottleneck: resampling the same question 4x (as the
+Pass@1 metric requires) only agrees on the same answer ~2.1/4 times on average, suggesting the model hasn't
+reliably learned the underlying decision rule from that little data. Next step is scaling up synthetic
+training data over the same rule set (see [Round 2+](#round-2-not-built-yet)) before retraining.
 
 ## Task
 
@@ -61,9 +76,15 @@ data/
 ├── validation_target.csv      — ground truth for validation_questions.csv
 └── SampleSubmission.csv       — submission shape reference
 notebooks/
-└── Cassava_AIRCD_finetune.ipynb
-                — self-contained Colab notebook: installs deps, builds the SFT dataset, loads
-                  Qwen2.5-1.5B-Instruct in 4-bit + LoRA, trains, validates locally, writes submission.csv.
+├── Cassava_AIRCD_finetune.ipynb
+│               — round 1, submitted. Self-contained Colab notebook: installs deps, builds the SFT
+│                 dataset, loads Qwen2.5-1.5B-Instruct in 4-bit + LoRA, trains, validates locally,
+│                 writes submission.csv. Pushes/pulls its adapter to `<user>/qwen25-1.5b-aircd-lora`.
+└── Cassava_AIRCD_finetune_v2.ipynb
+                — round 2. Same pipeline, but section 6 generates several shuffled/subset/prefixed
+                  layouts per train.csv row instead of one (~14,400 vs. 2,400 SFT examples), to give
+                  the model more exposure to test.csv's actual shuffled-option distribution. Separate
+                  Hub adapter (`<user>/qwen25-1.5b-aircd-lora-v2`) — doesn't touch round 1's.
 src/
 ├── data_prep.py — parsing (question tables, options), feature extraction, synthetic CoT generation,
 │                  train.csv → test-format conversion. Pure pandas/regex, no GPU needed.
@@ -112,11 +133,30 @@ Round 2+ backlog is intentionally deferred (see below).
 
 ## Round 2+ (not built yet)
 
-- Mix in generic MCQ/math examples (same `\boxed{N}` format) to shore up knowledge retention.
-- Synthesize training-style examples for the disjoint LTE-style 9-category fault domain (~12% of test.csv)
-  — currently zero training coverage.
+**In progress / next up**, in priority order (see [SUBMISSIONS.md](SUBMISSIONS.md) for why data scale is
+the current top priority):
+
+- **Scale synthetic C1-C8 training data.** `train.csv` gives 2,400 rows, reformatted but not expanded — the
+  self-consistency evidence in SUBMISSIONS.md suggests that's too thin for the model to reliably learn the
+  8 decision rules already encoded in `compute_features`/`synthesize_reasoning`. Generate many more synthetic
+  parameter combinations per rule (not just reformatting the existing rows) across the full valid range for
+  each threshold, in `test.csv`-style shuffled/prefixed format, then retrain once.
+- Mix in generic MCQ/math examples (same `\boxed{N}` format) to shore up knowledge retention (~9.4% of
+  test.csv).
+- **LTE 9-category domain (~11.6% of test.csv): known, deliberately deprioritized.** Neither `train.csv` nor
+  `validation_questions.csv`/`validation_target.csv` contain a single labeled example of this domain, so
+  there's no ground truth to derive or verify synthetic reasoning against — not worth the risk of training on
+  guessed labels.
+
+**Later / if time allows:**
+
 - Replace the templated CoT with physics-grounded reasoning for the geometry-heavy categories (C1/C2/C4:
   downtilt/beamwidth → coverage-radius trigonometry) once verified against train.csv's known labels.
 - Sweep LoRA rank/epochs, try alternate ≤4B base models, or move to full fine-tuning once H200 access
   is unlocked.
 - Revisit generation temperature/sampling strategy once we see how much variance helps vs. hurts Pass@1.
+- Mix in the public `netop/TeleLogs` dataset (arXiv:2507.21974) as additional SFT data — same taxonomy,
+  likely larger/higher-quality than `train.csv`, schema not yet verified against ours.
+- A GRPO reinforcement-learning stage after SFT — the same paper's own ablation shows this is what takes a
+  1.5B model from ~20% to ~87% pass@1 on this exact task, far beyond what SFT alone reaches. Out of scope for
+  the 2026-08-01 deadline, but the real ceiling if a round 2 happens.

@@ -307,10 +307,12 @@ def _choose_prefix_style(rng: random.Random):
     return rng.choice(LETTERS)
 
 
-def reformat_example(question_text: str, true_label: str, rng: random.Random):
+def reformat_options(question_text: str, true_label: str, rng: random.Random):
     """Mimic test.csv's real distribution: a random subset of the 8 canonical
     options (always including the true label) in random order, labeled with
-    a randomly chosen prefix style (plain digits or LETTER+digit)."""
+    a randomly chosen prefix style (plain digits or LETTER+digit). Layout-only
+    -- doesn't touch the embedded tables, so it's cheap to call many times per
+    underlying row for shuffle-variant generation."""
     matches = list(C_OPTION_RE.finditer(question_text))
     if not matches:
         raise ValueError("no canonical C-prefixed options found in question")
@@ -339,33 +341,57 @@ def reformat_example(question_text: str, true_label: str, rng: random.Random):
     new_question = OPTION_COUNT_RE.sub(
         lambda m: f"following {len(subset_labels)} potential {m.group(2)}", new_question, count=1
     )
+    return new_question, new_position[true_label]
 
-    true_position = new_position[true_label]
 
+def reformat_example(question_text: str, true_label: str, rng: random.Random):
+    """Single-shot reformat: layout shuffle + grounded reasoning target. Kept
+    for backward compatibility / single-variant callers; build_sft_dataset
+    with variants_per_example > 1 uses reformat_options directly instead, so
+    it parses each row's tables once regardless of how many variants it draws.
+    """
+    new_question, true_position = reformat_options(question_text, true_label, rng)
     try:
         drive_df = parse_drive_test_table(question_text)
         eng_df = parse_engineering_params(question_text)
         feats = compute_features(drive_df, eng_df)
     except Exception:
         feats = {}
-
     reasoning = synthesize_reasoning(true_label, feats)
     target_completion = f"{reasoning}\n\\boxed{{{true_position}}}"
     return new_question, target_completion
 
 
-def build_sft_dataset(train_csv_path: str, seed: int = 42) -> pd.DataFrame:
+def build_sft_dataset(train_csv_path: str, seed: int = 42, variants_per_example: int = 1) -> pd.DataFrame:
+    """variants_per_example > 1 draws multiple distinct shuffle/subset/prefix
+    layouts per row (same underlying scenario and true label) -- more exposure
+    to "find my rule's description among a differently-laid-out option list",
+    which is exactly what test.csv exercises but 1 pass over 2,400 rows barely
+    does. Table parsing/reasoning only depend on the row, not the layout, so
+    they're computed once per row regardless of variant count.
+    """
     df = pd.read_csv(train_csv_path)
     rng = random.Random(seed)
     rows = []
     for _, r in df.iterrows():
         true_label = str(r["answer"]).strip()
+        question_text = r["question"]
         try:
-            new_q, target = reformat_example(r["question"], true_label, rng)
-        except Exception as e:
-            print(f"skip {r['ID']}: {e}")
-            continue
-        rows.append({"ID": r["ID"], "prompt": new_q, "completion": target})
+            drive_df = parse_drive_test_table(question_text)
+            eng_df = parse_engineering_params(question_text)
+            feats = compute_features(drive_df, eng_df)
+        except Exception:
+            feats = {}
+        reasoning = synthesize_reasoning(true_label, feats)
+        for v in range(variants_per_example):
+            try:
+                new_q, true_position = reformat_options(question_text, true_label, rng)
+            except Exception as e:
+                print(f"skip {r['ID']} variant {v}: {e}")
+                continue
+            target_completion = f"{reasoning}\n\\boxed{{{true_position}}}"
+            row_id = r["ID"] if variants_per_example == 1 else f"{r['ID']}_v{v}"
+            rows.append({"ID": row_id, "prompt": new_q, "completion": target_completion})
     return pd.DataFrame(rows)
 
 
