@@ -18,8 +18,9 @@ bug, a non-deterministic seeding bug), not model-quality changes, and none moved
 adapter itself hasn't been retrained since round 1's first pass on `train.csv` reformatted as-is (2,400 rows).
 Current best evidence points at that being the actual bottleneck: resampling the same question 4x (as the
 Pass@1 metric requires) only agrees on the same answer ~2.1/4 times on average, suggesting the model hasn't
-reliably learned the underlying decision rule from that little data. Next step is scaling up synthetic
-training data over the same rule set (see [Round 2+](#round-2-not-built-yet)) before retraining.
+reliably learned the underlying decision rule from that little data. A round-2 notebook that scales up
+synthetic training data over the same rule set has already been built (see [Roadmap](#roadmap)); training
+and local validation for it are still pending.
 
 ## Task
 
@@ -99,7 +100,7 @@ without touching a model.
 ## Approach (round 1)
 
 Goal: the simplest thing that can plausibly clear the leaderboard benchmark, to unlock H200 access.
-Round 2+ backlog is intentionally deferred (see below).
+Further work beyond round 1 is intentionally deferred (see [Roadmap](#roadmap)).
 
 1. **Reformat train.csv to match test.csv's real distribution.** `data_prep.reformat_example` shuffles
    each question's 8 canonical options, keeps a random subset (calibrated to test.csv's observed
@@ -131,32 +132,33 @@ Round 2+ backlog is intentionally deferred (see below).
    upper-bound estimate, see [Data format](#data-format)).
 5. Download `/content/submission.csv` and submit it on Zindi.
 
-## Round 2+ (not built yet)
+## Roadmap
 
-**In progress / next up**, in priority order (see [SUBMISSIONS.md](SUBMISSIONS.md) for why data scale is
-the current top priority):
+The current top priority, scaling synthetic training data (see [SUBMISSIONS.md](SUBMISSIONS.md) for the
+reasoning), has already been built as `notebooks/Cassava_AIRCD_finetune_v2.ipynb`. `train.csv` provides
+2,400 rows, reformatted into test.csv's distribution but not otherwise expanded, and the self-consistency
+evidence in SUBMISSIONS.md suggests that is too little for the model to reliably learn the eight decision
+rules already encoded in `compute_features` and `synthesize_reasoning`. The round-2 notebook addresses this
+by generating several distinct shuffled, subset, and prefixed layouts per row instead of one, producing
+roughly 14,400 SFT examples. Training and local validation for this round are still pending.
 
-- **Scale synthetic C1-C8 training data.** `train.csv` gives 2,400 rows, reformatted but not expanded — the
-  self-consistency evidence in SUBMISSIONS.md suggests that's too thin for the model to reliably learn the
-  8 decision rules already encoded in `compute_features`/`synthesize_reasoning`. Generate many more synthetic
-  parameter combinations per rule (not just reformatting the existing rows) across the full valid range for
-  each threshold, in `test.csv`-style shuffled/prefixed format, then retrain once.
-- Mix in generic MCQ/math examples (same `\boxed{N}` format) to shore up knowledge retention (~9.4% of
-  test.csv).
-- **LTE 9-category domain (~11.6% of test.csv): known, deliberately deprioritized.** Neither `train.csv` nor
-  `validation_questions.csv`/`validation_target.csv` contain a single labeled example of this domain, so
-  there's no ground truth to derive or verify synthetic reasoning against — not worth the risk of training on
-  guessed labels.
+Mixing in generic knowledge and math examples, in the same `\boxed{N}` format, is a smaller but worthwhile
+addition to shore up knowledge retention for the roughly 9.4 percent of `test.csv` that tests general
+reasoning rather than telecom domain knowledge.
 
-**Later / if time allows:**
+The disjoint LTE nine-category fault domain, covering roughly 11.6 percent of `test.csv`, is deliberately
+deprioritized rather than simply deferred. Neither `train.csv` nor `validation_target.csv` contains a
+single labeled example from this domain, so there is no ground truth against which to derive or verify
+synthetic reasoning, and training against guessed labels would carry more risk than benefit.
 
-- Replace the templated CoT with physics-grounded reasoning for the geometry-heavy categories (C1/C2/C4:
-  downtilt/beamwidth → coverage-radius trigonometry) once verified against train.csv's known labels.
-- Sweep LoRA rank/epochs, try alternate ≤4B base models, or move to full fine-tuning once H200 access
-  is unlocked.
-- Revisit generation temperature/sampling strategy once we see how much variance helps vs. hurts Pass@1.
-- Mix in the public `netop/TeleLogs` dataset (arXiv:2507.21974) as additional SFT data — same taxonomy,
-  likely larger/higher-quality than `train.csv`, schema not yet verified against ours.
-- A GRPO reinforcement-learning stage after SFT — the same paper's own ablation shows this is what takes a
-  1.5B model from ~20% to ~87% pass@1 on this exact task, far beyond what SFT alone reaches. Out of scope for
-  the 2026-08-01 deadline, but the real ceiling if a round 2 happens.
+Further out, several directions remain worth pursuing if time allows. The templated chain-of-thought could
+be replaced with physics-grounded reasoning for the geometry-heavy categories, downtilt and beamwidth
+trigonometry for C1, C2, and C4, once verified against train.csv's known labels. LoRA rank and epoch count
+could be swept, or an alternate sub-4B base model tried, once H200 access is unlocked. Generation
+temperature and sampling strategy are worth revisiting once their effect on Pass@1 is better understood.
+The public `netop/TeleLogs` dataset (arXiv:2507.21974), which shares this competition's taxonomy and is
+likely larger and of higher quality than `train.csv`, could be mixed in as additional SFT data once its
+schema is verified against ours. Finally, the same paper's own ablation shows that a GRPO reinforcement
+learning stage after SFT takes a 1.5B model from roughly 20 percent to roughly 87 percent Pass@1 on this
+exact task, far beyond what SFT alone reaches — out of scope for the 2026-08-01 deadline, but the real
+ceiling for a future round.
