@@ -14,13 +14,16 @@ run on Zindi). Closes **2026-08-01**, leaderboard reveal **2026-08-03**.
 
 Three submissions so far, all clustered around 0.13-0.14 public score — see [SUBMISSIONS.md](SUBMISSIONS.md)
 for the full log and analysis. All three were infrastructure fixes (generation token budget, a local-scoring
-bug, a non-deterministic seeding bug), not model-quality changes, and none moved the score meaningfully. The
-adapter itself hasn't been retrained since round 1's first pass on `train.csv` reformatted as-is (2,400 rows).
-Current best evidence points at that being the actual bottleneck: resampling the same question 4x (as the
-Pass@1 metric requires) only agrees on the same answer ~2.1/4 times on average, suggesting the model hasn't
-reliably learned the underlying decision rule from that little data. A round-2 notebook that scales up
-synthetic training data over the same rule set has already been built (see [Roadmap](#roadmap)); training
-and local validation for it are still pending.
+bug, a non-deterministic seeding bug), not model-quality changes, and none moved the score meaningfully.
+
+A likely root cause has since been found and fixed: both notebooks' `SFTConfig` used `max_length=2048`, but
+the embedded drive-test/engineering tables alone run ~2000-2900 tokens per example, so nearly every training
+example was silently truncated down to a prompt-only fragment with no completion left, then dropped before
+training ever saw it. A first round-2 training attempt surfaced this directly — 38 optimizer steps instead
+of the expected ~1,800. This almost certainly also affected round 1's submitted adapter, source of all three
+scores above. Fixed to `max_length=3072` in both notebooks; a round-2 notebook that also scales up synthetic
+training data over the same rule set has been built (see [Roadmap](#roadmap)). Neither notebook has been
+retrained with the fix yet.
 
 ## Task
 

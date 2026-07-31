@@ -19,9 +19,21 @@ smarter. None moved the score by more than noise.
 The strongest signal we have that the *model* itself is the bottleneck: within submission #3, resampling the
 same question 4 times (as the Pass@1 metric requires) landed on the same `\boxed{N}` answer in all 4 samples
 for only 56/863 questions, and on average only 2.13/4 samples agreed at all. If the model had reliably learned
-the underlying decision rule, resampling the same inputs should converge far more often than that. This points
-at **insufficient/narrow training data** (2,400 rows, reformatted but not expanded) rather than a bug — see
-[Round 2+](README.md#round-2-not-built-yet) for the plan.
+the underlying decision rule, resampling the same inputs should converge far more often than that.
+
+## Update, 2026-07-31: the real explanation is likely a training bug, not just thin data
+
+A first training attempt for round 2 (`Cassava_AIRCD_finetune_v2.ipynb`) showed `[38/38 steps]` where roughly
+1,800 were expected. Measuring actual token counts with the real Qwen2.5 tokenizer showed why: the embedded
+drive-test/engineering tables alone run ~2000-2900 tokens per example (median ~2400), against
+`SFTConfig(max_length=2048)` in both notebooks. Essentially every example was being truncated down to a
+prompt-only fragment with the completion entirely cut off, then dropped as "fully masked" before training
+ever saw it — an earlier char-count-based estimate that these tables were "well within context window" was
+wrong. **This affects round 1 too** (confirmed 200/200 sampled round-1 examples also exceed 2048 tokens), so
+the adapter behind all three submissions above was very likely trained on a tiny sliver of `train.csv`, not
+the full 2,400 rows. That's a materially better explanation for the low self-consistency and the score
+plateau than "insufficient data diversity" — fixed to `max_length=3072` (0% truncation on the real
+14,400-example round-2 dataset) in both notebooks; neither has been retrained with the fix yet.
 
 Also known and *not* yet addressed by any submission: local validation (`validation_questions.csv`) only
 covers the "full canonical 8-option" slice of the distribution — the harder ~21% of `test.csv` (letter/subset
