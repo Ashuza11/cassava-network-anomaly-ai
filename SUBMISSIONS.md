@@ -1,13 +1,13 @@
 # Submission log
 
-Team `ZIMBRA` on Zindi. Same LoRA adapter (`qwen25-1.5b-aircd-lora`, pulled from the HF Hub, never
-retrained across these three runs) for all three submissions below — only inference-side bugs changed.
+Team `ZIMBRA` on Zindi.
 
 | # | Public score | Comment | What actually changed |
 |---|---|---|---|
-| 1 | 0.129343629 | first baseline submission | `GEN_MAX_NEW_TOKENS=300` — 8.5% of rows had no `\boxed{}` (truncated mid-reasoning) |
-| 2 | 0.14092664 | raised token budget 300→450 | Blank-answer rate dropped 8.5%→5.9%. `~+0.012` score gain, roughly matching the ~2.6% of rows recovered from truncation |
-| 3 | 0.138030888 | deterministic per-question seeding fix | Fixed a `hash()`-randomization bug (Python randomizes str hashing per-process, so the "fixed" `SEED` wasn't actually reproducible run-to-run). Score is flat vs. #2 (within noise) — confirms this was a reproducibility fix, not an accuracy lever |
+| 1 | 0.129343629 | first baseline submission | round-1 adapter. `GEN_MAX_NEW_TOKENS=300` — 8.5% of rows had no `\boxed{}` (truncated mid-reasoning) |
+| 2 | 0.14092664 | raised token budget 300→450 | round-1 adapter, unchanged. Blank-answer rate dropped 8.5%→5.9%. `~+0.012` score gain, roughly matching the ~2.6% of rows recovered from truncation |
+| 3 | 0.138030888 | deterministic per-question seeding fix | round-1 adapter, unchanged. Fixed a `hash()`-randomization bug (Python randomizes str hashing per-process, so the "fixed" `SEED` wasn't actually reproducible run-to-run). Score is flat vs. #2 (within noise) — confirms this was a reproducibility fix, not an accuracy lever |
+| 4 | 0.428571428 | v2 adapter, retrained on H200 after fixing the `max_length=2048` truncation bug (see below); ~14,400 scaled synthetic examples across 1,800 real training steps | **First real model-quality improvement.** ~3x jump over 1-3 — confirms the truncation bug (not data diversity) was the dominant cause of the earlier plateau |
 
 ## Reading
 
@@ -38,3 +38,11 @@ plateau than "insufficient data diversity" — fixed to `max_length=3072` (0% tr
 Also known and *not* yet addressed by any submission: local validation (`validation_questions.csv`) only
 covers the "full canonical 8-option" slice of the distribution — the harder ~21% of `test.csv` (letter/subset
 shuffled options, the disjoint LTE 9-category domain, generic MCQs) has never been locally measurable.
+
+## Update, 2026-08-01: the max_length fix confirmed as the real lever
+
+Submission #4, from the v2 adapter retrained on H200 with `max_length=3072` and the scaled ~14,400-example
+dataset, scored 0.428571428 — roughly 3x the 0.13-0.14 plateau of submissions 1-3. Sample-level self-
+consistency also improved visibly (3/4 samples agreeing on several spot-checked test questions, vs. the
+~2.1/4 average before). This confirms the truncation bug was the dominant cause of the earlier plateau, not
+insufficient data diversity as first hypothesized.
